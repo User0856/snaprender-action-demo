@@ -27,7 +27,6 @@ jobs:
         uses: rossjrw/pr-preview-action@v1
         with:
           source-dir: site
-          wait-for-pages-deployment: true
           qr-code: "false"
 
       - name: Wait until the preview serves this commit
