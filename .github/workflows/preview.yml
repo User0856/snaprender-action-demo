@@ -1,0 +1,83 @@
+name: Preview screenshots
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency: preview-${{ github.event.number }}
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: sed -i "s/__BUILD__/${GITHUB_SHA_SHORT}/" site/index.html
+        env:
+          GITHUB_SHA_SHORT: ${{ github.event.pull_request.head.sha }}
+
+      # Deploys site/ to GitHub Pages under pr-preview/pr-<number>/ (removed when the PR closes).
+      - name: Deploy preview
+        id: preview
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: site
+          wait-for-pages-deployment: true
+          qr-code: "false"
+
+      - name: Wait until the preview serves this commit
+        if: github.event.action != 'closed'
+        env:
+          URL: ${{ steps.preview.outputs.preview-url }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS "$URL?v=$i" | grep -q "$SHA"; then echo "live: $URL"; exit 0; fi
+            sleep 10
+          done
+          echo "preview did not go live in time"; exit 1
+
+      - name: Desktop screenshot
+        id: desktop
+        if: github.event.action != 'closed'
+        uses: User0856/snaprender-screenshot-action@v1
+        with:
+          api-key: ${{ secrets.SNAPRENDER_API_KEY }}
+          urls: ${{ steps.preview.outputs.preview-url }}
+          full-page: true
+          signed-urls: true
+
+      - name: iPhone screenshot
+        id: mobile
+        if: github.event.action != 'closed'
+        uses: User0856/snaprender-screenshot-action@v1
+        with:
+          api-key: ${{ secrets.SNAPRENDER_API_KEY }}
+          urls: ${{ steps.preview.outputs.preview-url }}
+          device: iphone_15_pro
+          full-page: true
+          output-dir: snaprender-mobile
+          signed-urls: true
+
+      - name: Comment on the pull request
+        if: github.event.action != 'closed'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DESKTOP: ${{ steps.desktop.outputs.markdown }}
+          MOBILE: ${{ steps.mobile.outputs.markdown }}
+        run: |
+          printf '### Desktop\n\n%s\n\n### iPhone 15 Pro\n\n%s\n' "$DESKTOP" "$MOBILE" > comment.md
+          gh pr comment ${{ github.event.number }} --repo ${{ github.repository }} --body-file comment.md
+
+      - uses: actions/upload-artifact@v4
+        if: github.event.action != 'closed'
+        with:
+          name: preview-screenshots
+          path: |
+            snaprender-screenshots/
+            snaprender-mobile/
